@@ -37,7 +37,7 @@ def health_check():
         "server": "running",
         "time": datetime.now(timezone.utc).isoformat(),
     }
-    return success_response("服務正常", data)
+    return success_response("服務正常，下一步", data)
 
 
 @app.get("/api/tasks")
