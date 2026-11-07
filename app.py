@@ -1,82 +1,75 @@
 from datetime import datetime, timezone
+import os
 
-from flask import Flask, jsonify, request, url_for
+from dotenv import load_dotenv
+from flask import Flask, jsonify
+from sqlalchemy import text
 from werkzeug.exceptions import HTTPException
 
-
-app = Flask(__name__)
-app.json.ensure_ascii = False
-
-tasks = [
-    {"id": 1, "title": "整理 API 文件", "description": "補上端點使用說明"},
-    {"id": 2, "title": "檢查部署設定", "description": "確認正式環境參數"},
-]
-next_task_id = 3
+from extensions import db
 
 
 def success_response(message, data, status_code=200):
-    return jsonify({"status": "success", "message": message, "data": data}), status_code
+    return jsonify({"code": status_code, "message": message, "data": data}), status_code
 
 
 def error_response(message, status_code):
-    return jsonify({"status": "error", "message": message, "data": None}), status_code
+    return jsonify({"code": status_code, "message": message, "data": None}), status_code
 
 
-@app.errorhandler(HTTPException)
-def handle_http_exception(error):
-    if error.code == 404:
-        message = "找不到指定路徑"
+def create_app(test_config=None):
+    load_dotenv()
+
+    app = Flask(__name__)
+    app.json.ensure_ascii = False
+
+    database_url = None
+    if test_config and "DATABASE_URL" in test_config:
+        database_url = test_config["DATABASE_URL"]
     else:
-        message = error.name
-    return error_response(message, error.code)
+        database_url = os.getenv("DATABASE_URL")
+
+    if not database_url:
+        raise RuntimeError("未設定 DATABASE_URL 環境變數，請在 .env 或系統環境變數中設定 PostgreSQL 連線字串。")
+
+    if database_url.startswith("postgres://"):
+        database_url = database_url.replace("postgres://", "postgresql://", 1)
+
+    app.config["SQLALCHEMY_DATABASE_URI"] = database_url
+    app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+
+    db.init_app(app)
+
+    @app.errorhandler(HTTPException)
+    def handle_http_exception(error):
+        if error.code == 404:
+            message = "找不到這一筆"
+        else:
+            message = error.name
+        return error_response(message, error.code)
+
+    @app.get("/api/health")
+    def health_check():
+        data = {
+            "status": "ok",
+            "time": datetime.now(timezone.utc).isoformat(),
+        }
+        return success_response("伺服器運作正常，測試正常可以進行其他任務。", data, 200)
+
+    @app.get("/api/health/db")
+    def health_check_db():
+        try:
+            db.session.execute(text("SELECT 1"))
+            return success_response("資料庫連線正常", {"status": "ok"}, 200)
+        except Exception as e:
+            db.session.rollback()
+            app.logger.error("資料庫連線檢查失敗: %s", e, exc_info=True)
+            return error_response("資料庫暫時連不上", 500)
+
+    return app
 
 
-@app.get("/api/health")
-def health_check():
-    data = {
-        "server": "running",
-        "time": datetime.now(timezone.utc).isoformat(),
-    }
-    return success_response("服務正常，下一步", data)
-
-
-@app.get("/api/tasks")
-def get_tasks():
-    return success_response("取得任務清單成功", tasks)
-
-
-@app.post("/api/tasks")
-def create_task():
-    global next_task_id
-
-    payload = request.get_json(silent=True)
-    if not isinstance(payload, dict):
-        return error_response("請提供合法的 JSON 物件", 400)
-
-    title = payload.get("title")
-    if not isinstance(title, str) or not title.strip():
-        return error_response("缺少必填欄位 title", 400)
-
-    task = {
-        "id": next_task_id,
-        "title": title,
-        "description": payload.get("description", ""),
-    }
-    next_task_id += 1
-    tasks.append(task)
-
-    response, status_code = success_response("新增任務成功", task, 201)
-    response.headers["Location"] = url_for("get_task", task_id=task["id"])
-    return response, status_code
-
-
-@app.get("/api/tasks/<int:task_id>")
-def get_task(task_id):
-    task = next((item for item in tasks if item["id"] == task_id), None)
-    if task is None:
-        return error_response("找不到指定任務", 404)
-    return success_response("取得任務成功", task)
-
+app = create_app()
 
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=5000, debug=True)
