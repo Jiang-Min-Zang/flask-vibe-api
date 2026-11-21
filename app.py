@@ -46,12 +46,26 @@ def create_app():
     def is_allowed_origin(origin: str | None) -> bool:
         if not origin:
             return False
-        web_origin = os.getenv("WEB_ORIGIN")
-        if web_origin and origin == web_origin.strip():
+
+        def normalize_origin(value: str) -> str:
+            return value.strip().rstrip("/").lower()
+
+        normalized_origin = normalize_origin(origin)
+        web_origins = os.getenv("WEB_ORIGIN", "")
+
+        # WEB_ORIGIN 可以逗號或空白分隔多個允許來源；瀏覽器送出的 Origin
+        # 不會包含結尾斜線，因此也在比對時統一正規化。
+        allowed_origins = {
+            normalize_origin(value)
+            for value in re.split(r"[,\s]+", web_origins)
+            if value.strip()
+        }
+        if normalized_origin in allowed_origins:
             return True
-        if re.match(r"^http://127\.0\.0\.1(:\d+)?$", origin):
+
+        if re.match(r"^http://127\.0\.0\.1(:\d+)?$", normalized_origin):
             return True
-        if re.match(r"^http://localhost(:\d+)?$", origin):
+        if re.match(r"^http://localhost(:\d+)?$", normalized_origin):
             return True
         return False
 
