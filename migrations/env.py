@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from sqlalchemy import engine_from_config, pool
 
 from extensions import db
+import models  # noqa: F401
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -20,19 +21,23 @@ if config.config_file_name is not None:
 # 目標 metadata 用 extensions.db.metadata
 target_metadata = db.metadata
 
-# env.py 讀取環境變數 DATABASE_URL；程序環境裡還沒有時，改讀專案目錄的 .env
-database_url = os.getenv("DATABASE_URL")
-if not database_url:
-    base_dir = Path(__file__).resolve().parent.parent
-    dotenv_path = base_dir / ".env"
-    if dotenv_path.is_file():
-        load_dotenv(dotenv_path)
-        database_url = os.getenv("DATABASE_URL")
 
-if database_url:
-    if database_url.startswith("postgres://"):
-        database_url = database_url.replace("postgres://", "postgresql://", 1)
-    config.set_main_option("sqlalchemy.url", database_url)
+def get_database_url() -> str:
+    url = os.getenv("DATABASE_URL")
+    if not url:
+        project_root = Path(__file__).resolve().parent.parent
+        env_file = project_root / ".env"
+        if env_file.exists():
+            load_dotenv(env_file)
+            url = os.getenv("DATABASE_URL")
+
+    if not url:
+        raise RuntimeError("未設定環境變數 DATABASE_URL，且專案根目錄的 .env 亦無此設定，無法執行資料庫遷移。")
+
+    if url.startswith("postgres://"):
+        url = url.replace("postgres://", "postgresql://", 1)
+
+    return url
 
 
 def run_migrations_offline() -> None:
@@ -47,10 +52,7 @@ def run_migrations_offline() -> None:
     script output.
 
     """
-    url = config.get_main_option("sqlalchemy.url")
-    if not url:
-        raise RuntimeError("未設定 DATABASE_URL 環境變數，請在系統環境變數或專案目錄的 .env 中提供 PostgreSQL 連線字串。")
-
+    url = get_database_url()
     context.configure(
         url=url,
         target_metadata=target_metadata,
@@ -69,12 +71,12 @@ def run_migrations_online() -> None:
     and associate a connection with the context.
 
     """
-    url = config.get_main_option("sqlalchemy.url")
-    if not url:
-        raise RuntimeError("未設定 DATABASE_URL 環境變數，請在系統環境變數或專案目錄的 .env 中提供 PostgreSQL 連線字串。")
+    url = get_database_url()
+    configuration = config.get_section(config.config_ini_section, {})
+    configuration["sqlalchemy.url"] = url
 
     connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
+        configuration,
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
@@ -92,3 +94,4 @@ if context.is_offline_mode():
     run_migrations_offline()
 else:
     run_migrations_online()
+
