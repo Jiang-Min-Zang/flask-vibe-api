@@ -1,6 +1,7 @@
 import os
 import re
 from datetime import datetime, timezone
+from urllib.parse import urlsplit
 
 from dotenv import load_dotenv
 from flask import Flask, Response, request
@@ -48,18 +49,27 @@ def create_app():
             return False
 
         def normalize_origin(value: str) -> str:
-            return value.strip().rstrip("/").lower()
+            value = value.strip()
+            if not value:
+                return ""
+
+            try:
+                parsed = urlsplit(value)
+                if parsed.scheme and parsed.netloc:
+                    return f"{parsed.scheme.lower()}://{parsed.netloc.lower()}"
+            except ValueError:
+                pass
+
+            return value.rstrip("/").lower()
 
         normalized_origin = normalize_origin(origin)
-        web_origins = os.getenv("WEB_ORIGIN", "")
-
-        # WEB_ORIGIN 可以逗號或空白分隔多個允許來源；瀏覽器送出的 Origin
-        # 不會包含結尾斜線，因此也在比對時統一正規化。
+        web_origin = os.getenv("WEB_ORIGIN", "")
         allowed_origins = {
             normalize_origin(value)
-            for value in re.split(r"[,\s]+", web_origins)
+            for value in re.split(r"[,\s]+", web_origin)
             if value.strip()
         }
+
         if normalized_origin in allowed_origins:
             return True
 
